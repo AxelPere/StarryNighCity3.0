@@ -1,6 +1,6 @@
 # StarryNighCity3.0
 
-# Starry Night City 3.0 (RP2350 / Pico 2W 3D Renderer)
+# Starry Night City 3.0 (Pico 2W 3D Renderer)
 
 A custom real-time 3D polygon-projected graphics engine and cyberpunk city simulation running entirely on a **Raspberry Pi Pico 2W (RP2350)** microcontroller, displayed on a 4-inch ST7796 TFT screen.
 
