@@ -1,0 +1,241 @@
+
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/gpio.h"
+#include "hardware/adc.h"
+#include "hardware/spi.h"
+
+//helper
+void send_led_state(uint8_t led_pattern) {
+    gpio_put(17, 0);
+    spi_write_blocking(spi0, &led_pattern, 1);
+    gpio_put(17, 1);
+}
+
+// task struct
+typedef struct _task {
+    signed char state;
+    unsigned long period;
+    unsigned long elapsedTime;
+    int (*TickFct)(int);
+} task;
+
+// variables
+#define NUM_TASKS 4
+unsigned char animationToggle = 0; // animation one = 0, animation two = 1
+
+//const unsigned long GCD_PERIOD = 100;
+
+task tasks[NUM_TASKS];
+
+// scheduler
+bool Tick(struct repeating_timer *t) {
+    for (unsigned int i = 0; i < NUM_TASKS; i++) {
+        if (tasks[i].elapsedTime >= tasks[i].period) {
+            tasks[i].state = tasks[i].TickFct(tasks[i].state);
+            tasks[i].elapsedTime = 0;
+        }
+        tasks[i].elapsedTime += 100;
+    }
+    return true;
+}
+
+// Task setup
+enum ANIMATION_ONE { ANIMATION_ONE_INIT, ANIMATION_ONE_STEP1, ANIMATION_ONE_STEP2 } ANIMATION_ONE_state;
+
+int ANIMATION_ONE_Tick(int state) {
+    if(animationToggle == 0) { // if animation toggle is 0, run animation one, otherwise run animation two
+        return state;
+    }
+    // Transitions
+    switch (state) {
+        case ANIMATION_ONE_INIT:
+            gpio_put_masked(0b111100, 0b000000);
+            send_led_state(0b00000000);
+
+            state = ANIMATION_ONE_STEP1;
+            break;
+        case ANIMATION_ONE_STEP1:
+            state = ANIMATION_ONE_STEP2;
+            break;
+        case ANIMATION_ONE_STEP2:
+            state = ANIMATION_ONE_STEP1;
+            break;
+        default:
+            break;
+    }
+    // Actions
+    switch (state) {
+        case ANIMATION_ONE_INIT:
+            break;
+        case ANIMATION_ONE_STEP1:
+            gpio_put_masked(0b111100, 0b101000);
+            send_led_state(0b10100000);
+            break;
+        case ANIMATION_ONE_STEP2:
+            gpio_put_masked(0b111100, 0b010100);
+            send_led_state(0b01010000);
+            break;
+        default:
+            break;
+    }
+    return state;
+}
+
+uint8_t snake_patterns[] = {
+    0b00000000,  // 0 LEDs
+    0b00000001,  // 1 LED
+    0b00000011,  // 2 LEDs
+    0b00000111,  // 3 LEDs
+    0b00001111,  // 4 LEDs
+    0b00011111,  // 5 LEDs
+    0b00111111,  // 6 LEDs
+    0b01111111,  // 7 LEDs
+    0b11111111   // 8 LEDs
+};
+
+enum ANIMATION_TWO { ANIMATION_TWO_INIT, ANIMATION_TWO_STEP1 } ANIMATION_TWO_state;
+
+int ANIMATION_TWO_Tick(int state) {
+    static unsigned char numLit = 0;
+
+    if(animationToggle == 1) {
+        return state;
+    }
+    // Transitions
+    switch (state) {
+        case ANIMATION_TWO_INIT:
+            gpio_put_masked(0b111100, 0b000000);
+            send_led_state(0b00000000);
+            numLit = 0;
+
+            state = ANIMATION_TWO_STEP1;
+            break;
+        case ANIMATION_TWO_STEP1:
+            break;
+        default:
+            break;
+    }
+    // Actions
+    switch (state) {
+        case ANIMATION_TWO_INIT:
+            break;
+        case ANIMATION_TWO_STEP1:
+            if ( numLit >= 9 ) numLit = 0;
+            gpio_put_masked(0b111100, (snake_patterns[numLit] & 0b00001111) << 2); // light more on
+            send_led_state(snake_patterns[numLit] & 0b11110000);
+            numLit = numLit + 1;
+            break;
+        default:
+            break;
+    }
+    return state;
+}
+
+int dipSwitchState(int state) {
+    int animationTogglePrev = animationToggle;
+
+    animationToggle = gpio_get(0); // read dip switch state
+
+    if(animationTogglePrev != animationToggle) { // New animation
+        tasks[0].state = ANIMATION_ONE_INIT; 
+        tasks[1].state = ANIMATION_TWO_INIT;
+    }
+
+    return state;
+}
+
+// helper function to map adc
+long map(long x, long in_min, long in_max, long out_min, long out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+// Exercise 3
+int adc_read_and_update(int state) {
+    uint16_t adc_value = adc_read();
+    unsigned long speed = map(adc_value, 0, 4095, 100, 1000); // 100ms to 1000ms
+    tasks[0].period = speed; // update animation one speed
+    tasks[1].period = speed; // update animation two speed
+    return state;
+}
+
+/*adc_select_input(uint input);. Determines which ADC channel to use for ADC(gpio pin 26 is ADC0 so you will need to do adc_select_input(0)). 
+After that, you can just use adc_read() to read it. The range of values that the ADC returns is [0,4095].
+*/
+
+int main()
+{
+    /*
+        gpio_init(4); // initializes gpio 4.
+        gpio_init_mask(0b1100); // initializes gpio 2 and 3.
+
+        gpio_set_dir(3, true); // sets gpio 3 as output.
+        gpio_set_dir_all_bits(0b1100); // sets gpio pins 0 and 1 to input and pins 2 and 3 to output.
+
+        gpio_put(3, 1); // turns gpio 3 to high
+        gpio_put_masked(0b111100, 0b110000); // turns gpio pins 4 and 5 on while pins 2 and 3 are turned off. Gpio pins 0 and 1 are unchanged since their value in the mask was 0
+
+        gpio_get(8); // reads gpio pin 8.
+
+        gpio_get_all(); // reads all gpio pins and returns a 32 bit value where each bit corresponds to the value of a gpio pin. For example, if gpio pins 0, 2, and 3 are high and the rest are low, this function would return 0b1101.
+    */
+
+    // inits
+    stdio_init_all();
+    adc_init();
+    spi_init(spi0, 1000 * 1000); // initialize spi at 1 MHz
+
+    gpio_set_function(16, GPIO_FUNC_SPI); // set gpio 16 to spi function (spi0 RS) MISO
+    gpio_set_function(18, GPIO_FUNC_SPI); // set gpio 18 to spi function (spi0 rx) SCK
+    gpio_set_function(19, GPIO_FUNC_SPI); // set gpio 19 to spi function (spi0 tx) MOSI
+
+    gpio_init(17);  // CS pin
+    gpio_set_dir(17, true);
+    gpio_put(17, 1); // start HIGH (inactive)
+
+    // pin intializations
+    gpio_init_mask(0b111101);
+    gpio_set_dir_all_bits(0b111100); // 2-5 output LEDs, 0 input dip switch
+
+    gpio_pull_up(0); // pull up for dip switch
+
+    adc_gpio_init(26);
+    adc_select_input(0);
+
+    // Task setup
+    tasks[0].period      = 500;
+    tasks[0].state       = ANIMATION_ONE_INIT;
+    tasks[0].elapsedTime = 500;
+    tasks[0].TickFct     = &ANIMATION_ONE_Tick;
+
+    tasks[1].period      = 500;
+    tasks[1].state       = ANIMATION_TWO_INIT;
+    tasks[1].elapsedTime = 500;
+    tasks[1].TickFct     = &ANIMATION_TWO_Tick;
+
+    tasks[2].period      = 10;
+    tasks[2].state       = 0;
+    tasks[2].elapsedTime = 500;
+    tasks[2].TickFct     = &dipSwitchState;
+
+    tasks[3].period      = 500;
+    tasks[3].state       = 0;
+    tasks[3].elapsedTime = 500;
+    tasks[3].TickFct     = &adc_read_and_update;
+
+    // Timer setup
+    /*
+        -500 is to call function every 500ms. '-' to make it start immediately. 
+        Tick is called (TimerISR) type bool return true to continue timer.
+        The 3rd parameter is the data to be passed to the callback function. NULL since most of the variables we use in the timer callbacks will be globals. 
+        The last parameter is the timer variable created.
+    */
+    struct repeating_timer timer;
+    add_repeating_timer_ms(-100, Tick, NULL, &timer);
+
+    while (true) {
+        // gpio_put(2,1);
+    }
+
+    return 0;
+}
