@@ -558,7 +558,7 @@ Moon moon;
 void init_moon() {
     // Pick a random starting angle anywhere around the 360-degree horizon
     moon.azimuth = ((float)(rand() % 1000) / 1000.0f) * 6.28318f;
-    moon.elevation = 0.6f; // High up in the upper sky
+    moon.elevation = 0.5f; // High up in the upper sky
     moon.radius = 16.0f;    // Nice large size
     moon.color = RGB565(31, 63, 28); // Soft pale warm white/yellow glow
 }
